@@ -34,11 +34,13 @@ commandsRouter.post('/command', async (req: Request, res: Response) => {
       case 'BACK':
       case 'HOME':
       case 'MENU':
+      case 'INPUT':
+      case 'SOURCE':
       case 'RED':
       case 'GREEN':
       case 'YELLOW':
       case 'BLUE':
-        result = await tvClient.sendNavigation(normalizedAction as PointerButton);
+        result = await tvClient.sendNavigation(normalizedAction === 'SOURCE' ? 'INPUT' : (normalizedAction as PointerButton));
         break;
 
       // Audio controls

@@ -57,6 +57,15 @@ export const RemotePage: React.FC<RemotePageProps> = ({ onOpenSetup, onAddToast 
     try {
       await sendCommand(action, payload);
     } catch (err: any) {
+      if (
+        err.message &&
+        (err.message.includes('PIN') ||
+          err.message.includes('Unauthorized') ||
+          err.message.includes('AUTH_REQUIRED'))
+      ) {
+        setIsPinModalOpen(true);
+        return;
+      }
       onAddToast({ type: 'error', text: err.message || `Failed to execute ${action}` });
     }
   };

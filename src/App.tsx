@@ -11,7 +11,15 @@ export function App() {
 
   const addToast = (toast: Omit<ToastMessage, 'id'>) => {
     const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { ...toast, id }]);
+    setToasts((prev) => {
+      // Deduplicate: Don't show identical message if already visible
+      if (prev.some((t) => t.text === toast.text)) {
+        return prev;
+      }
+      // Keep maximum 2 toasts at a time
+      const list = prev.length >= 2 ? prev.slice(1) : prev;
+      return [...list, { ...toast, id }];
+    });
   };
 
   const dismissToast = (id: string) => {

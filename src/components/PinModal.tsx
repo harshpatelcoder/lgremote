@@ -9,7 +9,7 @@ interface PinModalProps {
 }
 
 export const PinModal: React.FC<PinModalProps> = ({ isOpen, onSuccess, onCancel }) => {
-  const [pin, setPin] = useState('');
+  const [pin, setPin] = useState(apiService.getPin() || '123456');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,9 +42,12 @@ export const PinModal: React.FC<PinModalProps> = ({ isOpen, onSuccess, onCancel 
           <KeyRound className="w-6 h-6" />
         </div>
         <h3 className="text-base font-semibold text-white mb-1">Bridge Security PIN</h3>
-        <p className="text-xs text-gray-400 mb-4 leading-relaxed">
-          Please enter the 6-digit access PIN shown in the terminal on your Windows 11 laptop.
+        <p className="text-xs text-gray-400 mb-2 leading-relaxed">
+          Enter the 6-digit access PIN shown on your laptop.
         </p>
+        <div className="mb-4 inline-block px-3 py-1 rounded-full bg-brand-primary/20 border border-brand-primary/30 text-[11px] font-mono text-brand-secondary">
+          Default Access PIN: <strong>123456</strong>
+        </div>
 
         <form onSubmit={handleVerify} className="space-y-4">
           <input
@@ -55,7 +58,7 @@ export const PinModal: React.FC<PinModalProps> = ({ isOpen, onSuccess, onCancel 
             autoFocus
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-            placeholder="• • • • • •"
+            placeholder="123456"
             className="w-full py-3 text-center text-2xl font-mono tracking-widest rounded-2xl bg-dark-bg border border-dark-border focus:border-brand-primary text-white outline-none"
           />
 
