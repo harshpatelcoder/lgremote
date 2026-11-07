@@ -163,7 +163,7 @@ export const ConnectionCard: React.FC<ConnectionCardProps> = ({
         {/* Protocol badge */}
         <div className="text-right">
           <span className="text-[10px] font-mono text-gray-400 bg-dark-bg px-2 py-1 rounded border border-dark-border">
-            SSAP :3000
+            SSAP :3001 (WSS)
           </span>
         </div>
       </div>

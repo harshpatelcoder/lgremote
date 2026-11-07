@@ -47,6 +47,7 @@ export class LGWebOSClient extends EventEmitter {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private activePort: number = SSAP_PORTS.SECURE;
 
   constructor(defaultIp: string = '192.168.31.63') {
     super();
@@ -92,12 +93,16 @@ export class LGWebOSClient extends EventEmitter {
     const creds = credentialsStore.getCredentials(this.tvIp);
     const clientKey = creds ? creds.clientKey : null;
 
-    if (!clientKey) {
-      this.setStatus('WAITING_FOR_TV_APPROVAL');
-    }
-
     try {
-      await this.initiateWebSocket(this.tvIp, clientKey);
+      // Modern webOS TVs default to WSS on port 3001; fallback to port 3000
+      try {
+        await this.tryWebSocketConnect(`wss://${this.tvIp}:${SSAP_PORTS.SECURE}`, clientKey);
+        this.activePort = SSAP_PORTS.SECURE;
+      } catch (err: any) {
+        console.warn(`[LG TV Client] Port 3001 secure connect failed (${err.message}), falling back to port 3000...`);
+        await this.tryWebSocketConnect(`ws://${this.tvIp}:${SSAP_PORTS.PLAIN}`, clientKey);
+        this.activePort = SSAP_PORTS.PLAIN;
+      }
       return true;
     } catch (err: any) {
       console.error('[LG TV Client] Connection failed:', err.message || err);
@@ -106,27 +111,27 @@ export class LGWebOSClient extends EventEmitter {
     }
   }
 
-  private initiateWebSocket(ip: string, clientKey: string | null): Promise<void> {
+  private tryWebSocketConnect(url: string, clientKey: string | null): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = `ws://${ip}:${SSAP_PORTS.PLAIN}`;
-      console.log(`[LG TV Client] Opening WebSocket connection to ${url}...`);
+      console.log(`[LG TV Client] Attempting connection to ${url}...`);
 
       let connectionTimeout = setTimeout(() => {
-        if (this.status === 'CONNECTING' || this.status === 'WAITING_FOR_TV_APPROVAL') {
+        if (this.status === 'CONNECTING') {
           this.cleanup();
-          reject(new Error(`Connection to TV at ${ip} timed out. Ensure TV is ON and on the same Wi-Fi network.`));
+          reject(new Error(`Connection to TV at ${url} timed out.`));
         }
-      }, 15000);
+      }, 7000);
 
       try {
         this.ws = new WebSocket(url, {
-          handshakeTimeout: 7000,
+          handshakeTimeout: 5000,
           rejectUnauthorized: false,
         });
 
         this.ws.on('open', () => {
-          console.log('[LG TV Client] WebSocket connected, sending handshake registration...');
-          this.sendRegistration(clientKey, resolve, reject, connectionTimeout);
+          clearTimeout(connectionTimeout);
+          console.log(`[LG TV Client] WebSocket connected on ${url}, sending registration...`);
+          this.sendRegistration(clientKey, resolve, reject);
         });
 
         this.ws.on('message', (data: WebSocket.Data) => {
@@ -135,9 +140,9 @@ export class LGWebOSClient extends EventEmitter {
 
         this.ws.on('error', (err: any) => {
           clearTimeout(connectionTimeout);
-          console.error('[LG TV Client] WebSocket error:', err.message);
+          console.error(`[LG TV Client] WebSocket error on ${url}:`, err.message);
           this.cleanup();
-          reject(new Error(`WebSocket error: ${err.message || 'Connection refused by TV'}`));
+          reject(new Error(err.message || 'Connection error'));
         });
 
         this.ws.on('close', (code, reason) => {
@@ -160,8 +165,7 @@ export class LGWebOSClient extends EventEmitter {
   private sendRegistration(
     clientKey: string | null,
     resolve: () => void,
-    reject: (err: Error) => void,
-    timeoutTimer: NodeJS.Timeout
+    reject: (err: Error) => void
   ) {
     const regPayload = createRegistrationPayload(clientKey);
     const regMsg = {
@@ -170,7 +174,16 @@ export class LGWebOSClient extends EventEmitter {
       payload: regPayload,
     };
 
-    // Register temporary handler for register_0
+    // Give 45 seconds for user to look at TV and click "Allow" on screen
+    const timeoutTimer = setTimeout(() => {
+      if (this.pendingRequests.has('register_0')) {
+        this.pendingRequests.delete('register_0');
+        this.setStatus('ERROR', 'Pairing approval timed out. Please approve the request on your TV.');
+        reject(new Error('Pairing timed out on TV'));
+      }
+    }, 45000);
+
+    // Register handler for register_0
     this.pendingRequests.set('register_0', {
       resolve: async (res) => {
         clearTimeout(timeoutTimer);
@@ -182,7 +195,7 @@ export class LGWebOSClient extends EventEmitter {
         this.setStatus('CONNECTED');
         this.reconnectAttempts = 0;
 
-        // Initialize pointer socket & fetch initial audio status
+        // Initialize pointer socket & fetch audio status
         this.setupPointerSocket().catch((err) => {
           console.warn('[LG TV Client] Pointer input socket setup warning:', err.message);
         });
@@ -206,17 +219,39 @@ export class LGWebOSClient extends EventEmitter {
       const msg = JSON.parse(raw);
       const { id, type, payload, error } = msg;
 
-      // Handle pairing / registration
-      if (type === 'registered') {
-        const pending = this.pendingRequests.get('register_0');
-        if (pending) {
-          this.pendingRequests.delete('register_0');
-          pending.resolve(payload);
+      // Special handling for registration & pairing flow
+      if (id === 'register_0') {
+        // TV is notifying that it's waiting for user to click Allow on screen
+        if (type === 'response' && payload?.pairingType === 'PROMPT') {
+          console.log('[LG TV Client] TV is prompting user for connection approval...');
+          this.setStatus('WAITING_FOR_TV_APPROVAL');
+          return; // DO NOT delete pending request yet; keep waiting for "registered" message
         }
-        return;
+
+        // TV user has approved, or key was pre-approved
+        if (type === 'registered') {
+          console.log('[LG TV Client] TV pairing approved and registered!');
+          const pending = this.pendingRequests.get('register_0');
+          if (pending) {
+            this.pendingRequests.delete('register_0');
+            pending.resolve(payload);
+          }
+          return;
+        }
+
+        // TV returned an error on registration
+        if (error || (payload && payload.returnValue === false)) {
+          const errMsg = error || payload?.errorText || 'TV pairing was rejected';
+          const pending = this.pendingRequests.get('register_0');
+          if (pending) {
+            this.pendingRequests.delete('register_0');
+            pending.reject(new Error(errMsg));
+          }
+          return;
+        }
       }
 
-      // Handle matching requests
+      // Handle matching requests for other commands
       if (id && this.pendingRequests.has(id)) {
         const pending = this.pendingRequests.get(id)!;
         this.pendingRequests.delete(id);
@@ -231,7 +266,7 @@ export class LGWebOSClient extends EventEmitter {
         return;
       }
 
-      // Handle subscribed events (e.g. volume or mute changes)
+      // Handle subscribed events (volume or mute changes)
       if (payload) {
         if (typeof payload.volume === 'number') {
           this.volume = payload.volume;
@@ -244,7 +279,7 @@ export class LGWebOSClient extends EventEmitter {
         }
       }
     } catch (e) {
-      // Non-JSON message or malformed response
+      // Non-JSON message
     }
   }
 
