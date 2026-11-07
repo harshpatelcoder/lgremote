@@ -44,12 +44,14 @@ connectionRouter.post('/auth/verify', (req: Request, res: Response) => {
 /**
  * TV Connection status
  */
-connectionRouter.get('/status', (_req: Request, res: Response) => {
+connectionRouter.get('/status', (req: Request, res: Response) => {
   const currentStatus = tvClient.getStatus();
+  const authenticated = securityManager.isRequestAuthenticated(req);
   res.json({
     success: true,
     data: currentStatus,
     localIps: securityManager.getLocalIpAddresses(),
+    authenticated,
   });
 });
 

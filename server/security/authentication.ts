@@ -1,20 +1,39 @@
 import { Request, Response, NextFunction } from 'express';
 import os from 'os';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+
+const PIN_FILE = path.resolve(process.cwd(), '.bridge-pin');
 
 class SecurityManager {
   private bridgePin: string;
   private bridgeToken: string;
 
   constructor() {
-    // Generate a secure 6-digit access PIN if not set in environment
-    this.bridgePin = process.env.BRIDGE_PIN || this.generatePin();
+    this.bridgePin = this.loadOrInitPin();
     this.bridgeToken = crypto.randomBytes(24).toString('hex');
   }
 
-  private generatePin(): string {
-    // 6-digit random PIN e.g. "492815"
-    return Math.floor(100000 + Math.random() * 900000).toString();
+  private loadOrInitPin(): string {
+    if (process.env.BRIDGE_PIN) {
+      return process.env.BRIDGE_PIN.trim();
+    }
+
+    try {
+      if (fs.existsSync(PIN_FILE)) {
+        const saved = fs.readFileSync(PIN_FILE, 'utf-8').trim();
+        if (saved && saved.length >= 4) {
+          return saved;
+        }
+      }
+      // Default to 123456 for effortless setup, saved persistently
+      const defaultPin = '123456';
+      fs.writeFileSync(PIN_FILE, defaultPin, 'utf-8');
+      return defaultPin;
+    } catch {
+      return '123456';
+    }
   }
 
   public getPin(): string {
@@ -25,37 +44,35 @@ class SecurityManager {
     return this.bridgeToken;
   }
 
-  public verifyPin(candidatePin: string): boolean {
+  public verifyPin(candidatePin?: string): boolean {
     if (!candidatePin) return false;
     return candidatePin.trim() === this.bridgePin.trim();
   }
 
-  public verifyToken(candidateToken: string): boolean {
+  public verifyToken(candidateToken?: string): boolean {
     if (!candidateToken) return false;
     return candidateToken.trim() === this.bridgeToken.trim();
+  }
+
+  public isRequestAuthenticated(req: Request): boolean {
+    const isLocalhost =
+      req.ip === '127.0.0.1' ||
+      req.ip === '::1' ||
+      req.ip === '::ffff:127.0.0.1';
+
+    if (isLocalhost) return true;
+
+    const clientPin = (req.headers['x-bridge-pin'] as string) || (req.query.pin as string);
+    const clientToken = (req.headers['authorization'] as string)?.replace('Bearer ', '') || (req.query.token as string);
+
+    return this.verifyPin(clientPin) || this.verifyToken(clientToken);
   }
 
   /**
    * Express middleware to verify PIN or Token on control endpoints
    */
   public authMiddleware = (req: Request, res: Response, next: NextFunction): void => {
-    // Localhost callers (same laptop) can optionally be exempted or provide PIN
-    const isLocalhost =
-      req.ip === '127.0.0.1' ||
-      req.ip === '::1' ||
-      req.ip === '::ffff:127.0.0.1';
-
-    const clientPin = (req.headers['x-bridge-pin'] as string) || (req.query.pin as string);
-    const clientToken = (req.headers['authorization'] as string)?.replace('Bearer ', '') || (req.query.token as string);
-
-    // If client provides valid PIN or Token, allow
-    if (this.verifyPin(clientPin) || this.verifyToken(clientToken)) {
-      next();
-      return;
-    }
-
-    // Localhost allowed without PIN if desired, but providing PIN gives complete parity
-    if (isLocalhost) {
+    if (this.isRequestAuthenticated(req)) {
       next();
       return;
     }
@@ -79,7 +96,6 @@ class SecurityManager {
       if (!netInterface) continue;
 
       for (const iface of netInterface) {
-        // Skip over non-IPv4 and internal/loopback addresses
         if (iface.family === 'IPv4' && !iface.internal) {
           addresses.push(iface.address);
         }

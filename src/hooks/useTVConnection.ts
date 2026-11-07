@@ -46,12 +46,20 @@ export function useTVConnection() {
       setIsBridgeOnline(true);
       setOperatingMode('LOCAL_BRIDGE');
 
-      const { state, localIps } = await apiService.getStatus();
+      const { state, localIps, authenticated } = await apiService.getStatus();
       if (state) {
         setTvState(state);
       }
       if (localIps) {
         setLocalIps(localIps);
+      }
+      if (authenticated === false && !apiService.getPin()) {
+        // Automatically attempt default PIN 123456 on initial mobile load
+        apiService.verifyPin('123456').then((res) => {
+          if (!res.success) {
+            setIsPinModalOpen(true);
+          }
+        }).catch(() => {});
       }
       setLastError(null);
     } catch (err: any) {
@@ -66,10 +74,17 @@ export function useTVConnection() {
   useEffect(() => {
     refreshStatus();
 
+    // Listen to global 401 auth required events
+    const handleAuthRequired = () => {
+      setIsPinModalOpen(true);
+    };
+    window.addEventListener('bridge-auth-required', handleAuthRequired);
+
     // Poll status periodically (every 2.5s)
     pollTimerRef.current = setInterval(refreshStatus, 2500);
 
     return () => {
+      window.removeEventListener('bridge-auth-required', handleAuthRequired);
       if (pollTimerRef.current) {
         clearInterval(pollTimerRef.current);
       }

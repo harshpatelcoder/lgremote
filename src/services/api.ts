@@ -153,7 +153,7 @@ class ApiService {
   /**
    * Get TV connection status
    */
-  public async getStatus(): Promise<{ state: TVState; localIps?: string[] }> {
+  public async getStatus(): Promise<{ state: TVState; localIps?: string[]; authenticated?: boolean }> {
     const res = await fetch(`${this.getBaseUrl()}/api/status`, {
       headers: this.getHeaders(),
     });
@@ -164,6 +164,7 @@ class ApiService {
     return {
       state: data.data,
       localIps: data.localIps,
+      authenticated: data.authenticated,
     };
   }
 
@@ -178,6 +179,9 @@ class ApiService {
     });
     const data = await res.json();
     if (!res.ok) {
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent('bridge-auth-required'));
+      }
       throw new Error(data.error || 'Connection request failed');
     }
     return data;
@@ -194,6 +198,9 @@ class ApiService {
     });
     const data = await res.json();
     if (!res.ok) {
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent('bridge-auth-required'));
+      }
       throw new Error(data.error || 'Pairing request failed');
     }
     return data;
@@ -233,6 +240,9 @@ class ApiService {
     });
     const data = await res.json();
     if (!res.ok) {
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent('bridge-auth-required'));
+      }
       throw new Error(data.error || `Command ${action} failed on TV`);
     }
     return data;
@@ -249,6 +259,9 @@ class ApiService {
     });
     const data = await res.json();
     if (!res.ok) {
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent('bridge-auth-required'));
+      }
       throw new Error(data.error || 'Keyboard command failed');
     }
     return data;
